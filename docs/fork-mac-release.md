@@ -57,6 +57,10 @@ These are already referenced by upstream workflows. If your build or runtime pac
 
 If you do not use these integrations, you can try leaving them unset first and add them only if build-time checks require them.
 
+For a step-by-step guide on preparing Apple signing and notarization secrets, see:
+
+- `docs/fork-mac-release-secrets.md`
+
 ## Outputs
 
 The workflow publishes:
