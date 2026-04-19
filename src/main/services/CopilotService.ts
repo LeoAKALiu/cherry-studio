@@ -53,6 +53,8 @@ interface CopilotTokenResponse {
   token: string
 }
 
+type GitHubOAuthResponse = Record<string, string>
+
 // 自定义错误类，统一错误处理
 class CopilotServiceError extends Error {
   constructor(
@@ -91,6 +93,24 @@ class CopilotService {
   private updateHeaders = (headers?: Record<string, string>): void => {
     if (headers && Object.keys(headers).length > 0) {
       this.headers = { ...headers }
+    }
+  }
+
+  /**
+   * GitHub OAuth device flow may return either JSON or x-www-form-urlencoded payloads.
+   */
+  private parseGitHubOAuthResponse = async (response: Response): Promise<GitHubOAuthResponse> => {
+    const rawText = await response.text()
+
+    try {
+      return JSON.parse(rawText) as GitHubOAuthResponse
+    } catch {
+      const params = new URLSearchParams(rawText)
+      if ([...params.keys()].length > 0) {
+        return Object.fromEntries(params.entries())
+      }
+
+      throw new Error(`Unable to parse GitHub OAuth response: ${rawText.slice(0, 200)}`)
     }
   }
 
@@ -153,7 +173,7 @@ class CopilotService {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
 
-      return (await response.json()) as AuthResponse
+      return (await this.parseGitHubOAuthResponse(response)) as unknown as AuthResponse
     } catch (error) {
       logger.error('Failed to get auth message:', error as Error)
       throw new CopilotServiceError('无法获取GitHub授权信息', error)
@@ -193,7 +213,7 @@ class CopilotService {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`)
         }
 
-        const data = (await response.json()) as TokenResponse
+        const data = (await this.parseGitHubOAuthResponse(response)) as unknown as TokenResponse
         const { access_token } = data
         if (access_token) {
           return { access_token }

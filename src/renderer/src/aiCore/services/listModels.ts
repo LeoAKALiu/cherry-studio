@@ -10,6 +10,8 @@ import {
   zodSchema
 } from '@ai-sdk/provider-utils'
 import { loggerService } from '@logger'
+import { COPILOT_DEFAULT_HEADERS } from '@renderer/aiCore/provider/constants'
+import store from '@renderer/store'
 import type { EndpointType, Model, Provider } from '@renderer/types'
 import { SystemProviderIds } from '@renderer/types'
 import { formatApiHost, withoutTrailingSlash } from '@renderer/utils'
@@ -106,6 +108,26 @@ function defaultHeaders(provider: Provider): Record<string, string> {
     ...defaultAppHeaders(),
     ...(apiKey ? { Authorization: `Bearer ${apiKey}`, 'X-Api-Key': apiKey } : {}),
     ...provider.extra_headers
+  }
+}
+
+async function getCopilotHeaders(provider: Provider): Promise<Record<string, string>> {
+  const storedHeaders = store.getState().copilot?.defaultHeaders ?? {}
+  const authHeaders = { ...COPILOT_DEFAULT_HEADERS, ...storedHeaders, ...provider.extra_headers }
+
+  try {
+    const { token } = await window.api.copilot.getToken(authHeaders)
+    return {
+      ...defaultAppHeaders(),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...provider.extra_headers
+    }
+  } catch (error) {
+    logger.warn('Failed to get Copilot token for model listing, falling back to default headers', {
+      providerId: provider.id,
+      error
+    })
+    return defaultHeaders(provider)
   }
 }
 
@@ -208,6 +230,20 @@ const githubFetcher: ModelFetcher = {
     )
     const v1Models = v1Response.data.map((m) => toModel(m.id, provider, { owned_by: m.owned_by }))
     return dedup([...catalogModels, ...v1Models], (m) => m.id)
+  }
+}
+
+const copilotFetcher: ModelFetcher = {
+  match: (p) => p.id === SystemProviderIds.copilot,
+  fetch: async (provider, signal) => {
+    const baseUrl = formatApiHost(provider.apiHost)
+    const response = await getFromApi({
+      url: `${baseUrl}/models`,
+      headers: await getCopilotHeaders(provider),
+      responseSchema: OpenAIModelsResponseSchema,
+      abortSignal: signal
+    })
+    return dedup(response.data, (m) => m.id).map((m) => toModel(m.id, provider, { owned_by: m.owned_by }))
   }
 }
 
@@ -358,6 +394,7 @@ const fetchers: ModelFetcher[] = [
   ollamaFetcher,
   geminiFetcher,
   githubFetcher,
+  copilotFetcher,
   ovmsFetcher,
   togetherFetcher,
   newApiFetcher,
