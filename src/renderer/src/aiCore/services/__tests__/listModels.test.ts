@@ -6,6 +6,8 @@ import type { Provider } from '@renderer/types'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetFromApi = vi.fn()
+const mockGetCopilotToken = vi.fn()
+const mockStoreGetState = vi.fn(() => ({ copilot: { defaultHeaders: {} } }))
 vi.mock('@ai-sdk/provider-utils', () => ({
   createJsonResponseHandler: vi.fn(() => 'json-handler'),
   createJsonErrorResponseHandler: vi.fn(() => 'error-handler'),
@@ -27,6 +29,12 @@ vi.mock('@renderer/utils/provider', () => ({
 
 vi.mock('@shared/utils', () => ({
   defaultAppHeaders: () => ({ 'X-App': 'CherryStudio' })
+}))
+
+vi.mock('@renderer/store', () => ({
+  default: {
+    getState: mockStoreGetState
+  }
 }))
 
 const { listModels } = await import('../listModels')
@@ -235,7 +243,17 @@ function assertValidModels(models: { id: string; name: string; provider: string;
 
 beforeEach(() => {
   mockGetFromApi.mockReset()
-  vi.stubGlobal('window', { ...globalThis.window, keyv: { get: vi.fn(), set: vi.fn() } })
+  mockGetCopilotToken.mockReset()
+  mockStoreGetState.mockReturnValue({ copilot: { defaultHeaders: {} } })
+  vi.stubGlobal('window', {
+    ...globalThis.window,
+    keyv: { get: vi.fn(), set: vi.fn() },
+    api: {
+      copilot: {
+        getToken: mockGetCopilotToken.mockResolvedValue({ token: 'copilot-token' })
+      }
+    }
+  })
 })
 
 describe('listModels', () => {
@@ -331,6 +349,38 @@ describe('listModels', () => {
       mockGetFromApi.mockResolvedValueOnce({ value: REAL_OPENROUTER }).mockRejectedValueOnce(new Error('404 Not Found'))
       const models = await listModels(makeProvider({ id: 'openrouter' }))
       expect(models).toHaveLength(REAL_OPENROUTER.data.length)
+    })
+  })
+
+  describe('GitHub Copilot', () => {
+    it('uses copilot token when loading /models', async () => {
+      mockGetFromApi.mockResolvedValue({
+        value: {
+          data: [
+            { id: 'claude-opus-4.6', object: 'model', owned_by: 'anthropic' },
+            { id: 'gpt-4o-mini', object: 'model', owned_by: 'openai' }
+          ]
+        }
+      })
+
+      const models = await listModels(makeProvider({ id: 'copilot', apiHost: 'https://api.githubcopilot.com/' }))
+
+      expect(mockGetCopilotToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'Copilot-Integration-Id': 'vscode-chat',
+          'Editor-Version': 'vscode/1.104.1'
+        })
+      )
+      expect(mockGetFromApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://api.githubcopilot.com/models',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer copilot-token',
+            'X-App': 'CherryStudio'
+          })
+        })
+      )
+      expect(models.map((model) => model.id)).toEqual(['claude-opus-4.6', 'gpt-4o-mini'])
     })
   })
 
